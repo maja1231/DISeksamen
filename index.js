@@ -56,7 +56,7 @@ const hashPassword = (password) => {
 
 
 
-
+app.use(express.static(__dirname + '/public'))
 
 app.use(
     session({
@@ -75,17 +75,13 @@ app.get("/", (req, res) => {
 });
 
 
-app.get("/logout", (req, res) => {
-    req.session.destroy((err) => {});
-    return res.send("Thank you! Visit again");
-});
-
-  
+// Et dashboard som kun brugere med 'loggedIn' = true i session kan se
 app.get("/dashboard", (req, res) => {
   if (req.session.loggedIn) {
+    // Her generere vi en html side med et brugernavn på (Tjek handlebars.js hvis du vil lave fancy html på server siden)
     res.setHeader("Content-Type", "text/html");
     res.write("Welcome " + req.session.username + " to your dashboard");
-    res.write('<a href="/logout">Logout</a>');
+    res.write('<a href="/logout">Logout</a>')
     return res.end();
   } else {
     return res.redirect("/");
@@ -115,6 +111,12 @@ app.post("/authenticate", bodyParser.urlencoded(), async (req, res) => {
       // Sender en error 401 (unauthorized) til klienten
       return  res.sendStatus(401);
   }
+});
+
+
+app.get("/logout", (req, res) => {
+  req.session.destroy((err) => {});
+  return res.send("Thank you! Visit again");
 });
 
 
