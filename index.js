@@ -5,8 +5,10 @@ const path = require("path");
 const app = express();
 const port = 3000;
 const sqlite3 = require('sqlite3').verbose();
-var crypto = require('crypto');
-
+const bcrypt = require("bcrypt")
+const socketIO = require("socket.io")
+const https = require("https");
+const fs = require('fs');
 
 // Sqlite ting
 const db = new sqlite3.Database('./db.sqlite');
@@ -14,10 +16,15 @@ const db = new sqlite3.Database('./db.sqlite');
 db.serialize(function() {
   console.log('creating databases if they don\'t exist');
   db.run('create table if not exists users (userId integer primary key, username text not null, password text not null)');
+  db.run('create table if not exists messages (messageId integer primary key, username text not null, message text not null)');
 });
 
+const secureServer = https.createServer({
+  key: fs.readFileSync('./server.key'),
+  cert: fs.readFileSync('./server.cert')
+  }, app);
 
-// Tilføjer user til db
+// Adds user to db
 const addUserToDatabase = (username, password) => {
   db.run(
     'insert into users (username, password) values (?, ?)', 
@@ -30,11 +37,22 @@ const addUserToDatabase = (username, password) => {
   );
 }
 
+const addMessageToDatabase = (username, message) => {
+  db.run(
+    'insert into messages (username, message) values (?, ?)', 
+    [username, message], 
+    function(err) {
+      if (err) {
+        console.error(err);
+      }
+    }
+  );
+}
+
 const getUserByUsername = (userName) => {
-  // Smart måde at konvertere fra callback til promise:
   return new Promise((resolve, reject) => {  
     db.all(
-      'select * from users where userName=(?)',
+      'select * from users where username=(?)',
       [userName], 
       (err, rows) => {
         if (err) {
@@ -47,14 +65,32 @@ const getUserByUsername = (userName) => {
   })
 }
 
-const md5sum = crypto.createHash('md5');
-const salt = 'Some salt for the hash';
-
-const hashPassword = (password) => {
-  return md5sum.update(password + salt).digest('hex');
+const getAllMessages = () => {
+  return new Promise((resolve, reject) => {  
+    db.all(
+      'select * from messages',
+      [], 
+      (err, rows) => {
+        if (err) {
+          console.error(err);
+          return reject(err);
+        }
+        return resolve(rows);
+      }
+    );
+  })
 }
 
+async function hashPassword(plaintextPassword) {
+    const hash = await bcrypt.hash(plaintextPassword, 10);
+    return hash;
+}
 
+  // compare password
+async function comparePassword(plaintextPassword, hash) {
+    const result = await bcrypt.compare(plaintextPassword, hash);
+    return result;
+}
 
 app.use(express.static(__dirname + '/public'))
 
@@ -68,21 +104,15 @@ app.use(
 
 app.get("/", (req, res) => {
     if (req.session.loggedIn) {
-        return res.redirect("/dashboard");
+        return res.redirect("/chatroom");
     } else {
         return res.sendFile("login.html", { root: path.join(__dirname, "public") });
     }
 });
 
-
-// Et dashboard som kun brugere med 'loggedIn' = true i session kan se
-app.get("/dashboard", (req, res) => {
+app.get("/chatroom", (req, res) => {
   if (req.session.loggedIn) {
-    // Her generere vi en html side med et brugernavn på (Tjek handlebars.js hvis du vil lave fancy html på server siden)
-    res.setHeader("Content-Type", "text/html");
-    res.write("Welcome " + req.session.username + " to your dashboard");
-    res.write('<a href="/logout">Logout</a>')
-    return res.end();
+    return res.sendFile("chatroom.html", { root: path.join(__dirname, "public") });
   } else {
     return res.redirect("/");
   }
@@ -91,25 +121,23 @@ app.get("/dashboard", (req, res) => {
 
 
 app.post("/authenticate", bodyParser.urlencoded(), async (req, res) => {
-  
-  
-  // Opgave 1
-  // Programmer så at brugeren kan logge ind med sit brugernavn og password
+  const user = await getUserByUsername(req.body.username);
 
-  // Henter vi brugeren ud fra databasen
-  // const user = await getUserByUsername('test')
-  // console.log({user});
+  if (!user.length) {
+    return res.send('No user found, please sign up');
+  }
 
+  const hashedPassword = user[0].password;
 
-  // Hint: Her skal vi tjekke om brugeren findes i databasen og om passwordet er korrekt
-  if (req.body.username == "test" && req.body.password == "password") {
-      req.session.loggedIn = true;
-      req.session.username = req.body.username;
-      console.log(req.session);
-      res.redirect("/dashboard");
+  const isCorrectPassword = await comparePassword(req.body.password, hashedPassword);
+
+  if (isCorrectPassword) {
+    req.session.loggedIn = true;
+    req.session.username = req.body.username;
+    res.redirect("/");
   } else {
-      // Sender en error 401 (unauthorized) til klienten
-      return  res.sendStatus(401);
+    // Sendes an error 401 (unauthorized) to client
+    res.sendStatus(401);
   }
 });
 
@@ -118,10 +146,6 @@ app.get("/logout", (req, res) => {
   req.session.destroy((err) => {});
   return res.send("Thank you! Visit again");
 });
-
-
-
-
 
 app.get("/signup", (req, res) => {
   if (req.session.loggedIn) {
@@ -137,15 +161,29 @@ app.post("/signup", bodyParser.urlencoded(), async (req, res) => {
     return res.send('Username already exists');
   }
 
-  // Opgave 2
-  // Brug funktionen hashPassword til at kryptere passwords (husk både at hash ved signup og login!)
-  addUserToDatabase(req.body.username, req.body.password);
+  // Here want to have hashes password and messenges
+  const hashedPassword = await hashPassword(req.body.password);
+  addUserToDatabase(req.body.username, hashedPassword);
   res.redirect('/');
 })  
-  
 
 
+const { Server } = require("socket.io");
+const io = new Server(secureServer);
 
-app.listen(port, () => {
-  console.log("Website is running");
+secureServer.listen(port, () => {
+  console.log('listening on :', port);
+});
+
+io.on("connection", function (socket) { 
+  socket.on("join", async function (username) {
+    const allMessages = await getAllMessages();
+    socket.emit('messages', allMessages);
+    socket.broadcast.emit("message", { username: 'global', text: username + " joined the chat!" }); 
+  });
+
+  socket.on("message", function (message) {
+    addMessageToDatabase(message.username, message.text);
+		io.sockets.emit("message", message); 
+  });
 });

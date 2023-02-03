@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+    <div id="chatroom-container">
+        <h2>chat room</h2>
+        <a href='/logout' a id="logout-button">log ud</a>
+        <div id="messages-container" class="scrollable">
+        </div>
+        <form id="chat-form">
+            <input type="text" class="msg-textbox" name="send" placeholder="Send Message">
+            <input type="submit" class="send-btn">
+        </form>
+    </div>
+<script src="https://code.jquery.com/jquery-3.1.1.js"></script>
+<script src="https://cdn.socket.io/4.5.4/socket.io.min.js" integrity="sha384-/KNQL8Nu5gCHLqwqfQjA689Hhoqgi2S84SNUxC3roTe4EhJ9AfLkp8QiQcU8AMzI" crossorigin="anonymous"></script>
+<script src="chatroom.js"></script>
+</body>
+</html>
